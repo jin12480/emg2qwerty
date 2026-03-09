@@ -278,3 +278,38 @@ class TDSConvEncoder(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         return self.tds_conv_blocks(inputs)  # (T, N, num_features)
+
+
+class BiGRUEncoder(nn.Module):
+    """A Bidirectional GRU encoder.
+
+    Args:
+        input_size (int): Number of input features.
+        hidden_size (int): Number of features in the hidden state.
+        num_layers (int): Number of recurrent layers.
+        dropout (float): Dropout probability.
+        bidirectional (bool): If True, becomes a bidirectional GRU. (default: True)
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        num_layers: int,
+        dropout: float = 0.0,
+        bidirectional: bool = True,
+    ) -> None:
+        super().__init__()
+        self.gru = nn.GRU(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,
+            bidirectional=bidirectional,
+            batch_first=False,
+        )
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        # inputs: (T, N, input_size)
+        outputs, _ = self.gru(inputs)
+        return outputs  # (T, N, hidden_size * 2) if bidirectional else (T, N, hidden_size)
