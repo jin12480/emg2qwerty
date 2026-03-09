@@ -1,0 +1,9 @@
+- user=single_user
+- model=bigru_ctc
+- dataset.root=C:/Users/15855/OneDrive/UCLA/course/247A/Project/emg2qwerty/data/subject_89335547
+- trainer.accelerator=gpu
+- trainer.devices=1
+- trainer.max_epochs=40
+- num_workers=1
+- train=True
+- decoder=ctc_greedy

@@ -1,0 +1,6 @@
+{
+  "latest_run_id": "bigru_2026-03-09_06-38-52",
+  "val_cer": 29.020824432373047,
+  "test_cer": 37.43246078491211,
+  "checkpoint_path": "logs/2026-03-09/06-38-52\\checkpoints\\last.ckpt"
+}

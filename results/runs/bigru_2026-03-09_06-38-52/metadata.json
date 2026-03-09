@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-03-09T07:21:36.461344",
+  "run_id": "bigru_2026-03-09_06-38-52",
+  "run_dir": "logs/2026-03-09/06-38-52",
+  "git_commit": "b9cf71254ef20ca30ed766e2af688bdac5df9032",
+  "python_version": "3.13.5 | packaged by Anaconda, Inc. | (main, Jun 12 2025, 16:37:03) [MSC v.1929 64 bit (AMD64)]",
+  "data_dir": null,
+  "checkpoint_path": "logs/2026-03-09/06-38-52\\checkpoints\\last.ckpt",
+  "val_cer": 29.020824432373047,
+  "test_cer": 37.43246078491211,
+  "metrics_note": "Extracted from text logs. If null, either not evaluated or log parsing failed."
+}

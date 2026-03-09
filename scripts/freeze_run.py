@@ -6,6 +6,7 @@ import shutil
 import argparse
 from datetime import datetime
 import subprocess
+import re
 
 def get_latest_run_dir(logs_dir="logs"):
     if not os.path.isdir(logs_dir):
@@ -119,34 +120,43 @@ def main():
     
     # Try looking in the ipynb if run from ipynb (as a fallback since python logging was overridden)
     if val_cer is None:
+        run_dir_norm = run_dir.replace("\\", "/")
+        run_token = "/".join(run_dir_norm.split("/")[-2:])  # e.g. 2026-03-09/06-38-52
         notebook_logs = glob.glob(os.path.join(os.path.abspath("."), "*.ipynb"))
         for nb in notebook_logs:
             with open(nb, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-                # Use simple regex directly on the notebook contents
-                import re
-                val_matches = re.findall(r"'val/CER'\s*:\s*([0-9]+\.[0-9]+)", content)
-                test_matches = re.findall(r"'test/CER'\s*:\s*([0-9]+\.[0-9]+)", content)
-                
-                # Check checkpoint printouts to match the run
-                if "03-18-40" in run_dir or "03-13-15" in run_dir:
-                    # Specific to your current notebook state as a reliable fallback
-                    if val_matches: val_cer = float(val_matches[-1])
-                    if test_matches: test_cer = float(test_matches[-1])
+                # Match dict-like result blocks printed at end of training/eval
+                result_block_pattern = re.compile(
+                    r"'val/CER':\s*([0-9]+\.[0-9]+).*?"
+                    r"'test/CER':\s*([0-9]+\.[0-9]+).*?"
+                    r"'best_checkpoint':\s*'([^']+)'",
+                    re.S,
+                )
+                for m in result_block_pattern.finditer(content):
+                    ckpt = m.group(3).replace("\\\\", "/").replace("\\", "/")
+                    ckpt = re.sub(r"/+", "/", ckpt)
+                    if run_token in ckpt:
+                        val_cer = float(m.group(1))
+                        test_cer = float(m.group(2))
+                        break
+            if val_cer is not None and test_cer is not None:
+                break
 
-    for log_file in log_files:
-        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                if "val/cer" in line.lower() or "val_cer" in line.lower() or "cer" in line.lower():
-                    import re
-                    # Look for val CER
-                    if "val" in line.lower():
-                        m = re.search(r"val_?/?cer.*?([0-9]+\.[0-9]+)", line.lower())
-                        if m: val_cer = float(m.group(1))
-                if "test/cer" in line.lower() or "test_cer" in line.lower():
-                    import re
-                    m = re.search(r"test_?/?cer.*?([0-9]+\.[0-9]+)", line.lower())
-                    if m: test_cer = float(m.group(1))
+    if val_cer is None or test_cer is None:
+        for log_file in log_files:
+            with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if "val/cer" in line.lower() or "val_cer" in line.lower() or "cer" in line.lower():
+                        # Look for val CER
+                        if "val" in line.lower():
+                            m = re.search(r"val_?/?cer.*?([0-9]+\.[0-9]+)", line.lower())
+                            if m:
+                                val_cer = float(m.group(1))
+                    if "test/cer" in line.lower() or "test_cer" in line.lower():
+                        m = re.search(r"test_?/?cer.*?([0-9]+\.[0-9]+)", line.lower())
+                        if m:
+                            test_cer = float(m.group(1))
 
     metadata["val_cer"] = val_cer
     metadata["test_cer"] = test_cer
@@ -186,12 +196,17 @@ def main():
     with open(os.path.join(run_out_dir, "summary.md"), "w") as f:
         f.write(summary)
 
-    # LATEST
-    latest_md = os.path.join(args.out_dir, "BASELINE_LATEST.md")
-    latest_json = os.path.join(args.out_dir, "BASELINE_LATEST.json")
+    # LATEST (tag-specific)
+    latest_prefix = f"{(args.tag or 'run').upper()}_LATEST"
+    latest_md = os.path.join(args.out_dir, f"{latest_prefix}.md")
+    latest_json = os.path.join(args.out_dir, f"{latest_prefix}.json")
 
     with open(latest_md, "w") as f:
-        f.write(f"# Latest Baseline\nRun ID: {run_id}\n\nSee `runs/{run_id}` for details.\n\n")
+        f.write(
+            f"# Latest {(args.tag or 'run').title()}\n"
+            f"Run ID: {run_id}\n\n"
+            f"See `runs/{run_id}` for details.\n\n"
+        )
         f.write(f"- **Val CER**: {val_cer}\n- **Test CER**: {test_cer}\n- **Checkpoint**: `{metadata['checkpoint_path']}`\n")
     
     with open(latest_json, "w") as f:

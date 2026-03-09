@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-03-09T07:15:18.706901",
+  "run_id": "baseline_2026-03-09_06-38-52",
+  "run_dir": "logs\\2026-03-09\\06-38-52",
+  "git_commit": "b9cf71254ef20ca30ed766e2af688bdac5df9032",
+  "python_version": "3.10.20 | packaged by conda-forge | (main, Mar  5 2026, 16:36:49) [MSC v.1944 64 bit (AMD64)]",
+  "data_dir": null,
+  "torch_version": "2.10.0+cu128",
+  "cuda_version": "12.8",
+  "gpu_name": "NVIDIA GeForce RTX 5080",
+  "checkpoint_path": "logs\\2026-03-09\\06-38-52\\checkpoints\\last.ckpt",
+  "val_cer": null,
+  "test_cer": null,
+  "metrics_note": "Extracted from text logs. If null, either not evaluated or log parsing failed."
+}

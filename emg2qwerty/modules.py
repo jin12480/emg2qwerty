@@ -311,5 +311,14 @@ class BiGRUEncoder(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         # inputs: (T, N, input_size)
-        outputs, _ = self.gru(inputs)
+        # cuDNN GRU may fail on some shapes (especially long eval sequences).
+        # Use a safe fallback to the non-cuDNN implementation when needed.
+        contiguous_inputs = inputs.contiguous()
+        try:
+            outputs, _ = self.gru(contiguous_inputs)
+        except RuntimeError as exc:
+            if "CUDNN_STATUS_NOT_SUPPORTED" not in str(exc):
+                raise
+            with torch.backends.cudnn.flags(enabled=False):
+                outputs, _ = self.gru(contiguous_inputs)
         return outputs  # (T, N, hidden_size * 2) if bidirectional else (T, N, hidden_size)
