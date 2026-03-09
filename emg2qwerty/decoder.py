@@ -13,8 +13,11 @@ import math
 from collections.abc import Iterator
 from dataclasses import dataclass, field, InitVar
 from typing import Any, ClassVar
+try:
+    import kenlm  # type: ignore
+except ImportError:
+    kenlm = None  # type: ignore
 
-import kenlm
 import numpy as np
 
 from emg2qwerty.charset import CharacterSet, charset

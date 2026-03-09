@@ -64,6 +64,10 @@ def main(config: DictConfig):
     )
     if config.checkpoint is not None:
         log.info(f"Loading module from checkpoint {config.checkpoint}")
+        try:
+            torch.serialization.add_safe_globals([omegaconf.dictconfig.DictConfig, omegaconf.listconfig.ListConfig])
+        except AttributeError:
+            pass
         module = module.load_from_checkpoint(
             config.checkpoint,
             optimizer=config.optimizer,
@@ -107,6 +111,10 @@ def main(config: DictConfig):
         trainer.fit(module, datamodule, ckpt_path=resume_from_checkpoint)
 
         # Load best checkpoint
+        try:
+            torch.serialization.add_safe_globals([omegaconf.dictconfig.DictConfig, omegaconf.listconfig.ListConfig])
+        except AttributeError:
+            pass
         module = module.load_from_checkpoint(
             trainer.checkpoint_callback.best_model_path
         )
