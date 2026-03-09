@@ -53,3 +53,11 @@ bids_data
 
 # LM
 wikitext-103-raw*
+
+# Artifacts
+outputs/
+**/*.ckpt
+**/*.hdf5
+**/*.h5
+**/*.zip
+sitecustomize.py
