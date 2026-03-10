@@ -24,6 +24,126 @@ from emg2qwerty.transforms import Transform
 log = logging.getLogger(__name__)
 
 
+class _EpochSummaryCallback(pl.Callback):
+    """One line per train epoch (no step-level tqdm spam). Val still runs but bar is off."""
+
+    def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        m = trainer.callback_metrics
+        epoch = trainer.current_epoch
+        loss = m.get("train/loss")
+        cer = m.get("train/CER")
+        loss_s = f"{loss:.4f}" if loss is not None and hasattr(loss, "item") else (str(loss) if loss is not None else "n/a")
+        cer_s = f"{cer:.4f}" if cer is not None and hasattr(cer, "item") else (str(cer) if cer is not None else "n/a")
+        print(f"[epoch {epoch}] train loss={loss_s}  train/CER={cer_s}", flush=True)
+
+
+class _ValEpochSummaryCallback(pl.Callback):
+    """One line per validation epoch so logs have full val curve (for plotting)."""
+
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        m = trainer.callback_metrics
+        epoch = trainer.current_epoch
+        loss = m.get("val/loss")
+        cer = m.get("val/CER")
+        loss_s = f"{loss:.4f}" if loss is not None and hasattr(loss, "item") else (str(loss) if loss is not None else "n/a")
+        cer_s = f"{cer:.4f}" if cer is not None and hasattr(cer, "item") else (str(cer) if cer is not None else "n/a")
+        print(f"[epoch {epoch}] val loss={loss_s}  val/CER={cer_s}", flush=True)
+
+
+class _BestValTrainSnapshotCallback(pl.Callback):
+    """Capture train CER/IER/DER/SER for the epoch that achieves best val/CER.
+
+    This matches the user's desired "train@best-val-epoch" reporting (not post-hoc eval on train set).
+    """
+
+    def __init__(self) -> None:
+        self.best_epoch: int | None = None
+        self.best_train_bd: dict[str, float | None] = {}
+
+    def on_validation_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        ckpt_cb = getattr(trainer, "checkpoint_callback", None)
+        if ckpt_cb is None:
+            return
+
+        best_path = getattr(ckpt_cb, "best_model_path", "") or ""
+        last_path = getattr(ckpt_cb, "last_model_path", "") or ""
+        # When best improves, PL typically saves a new checkpoint; last_path often equals best_model_path then.
+        # This heuristic is robust enough for our single-checkpoint-callback setup.
+        if not best_path or best_path != last_path:
+            return
+
+        m = trainer.callback_metrics
+        self.best_epoch = trainer.current_epoch
+        self.best_train_bd = {
+            "CER": _metric_get(m, "train/CER"),
+            "IER": _metric_get(m, "train/IER"),
+            "DER": _metric_get(m, "train/DER"),
+            "SER": _metric_get(m, "train/SER"),
+        }
+
+
+def _metric_get(d: dict, key: str):
+    v = d.get(key)
+    if v is None:
+        return None
+    return float(v) if hasattr(v, "item") else float(v)
+
+
+def _breakdown_from_metrics(d: dict | None, prefix: str) -> dict[str, float | None]:
+    """Extract CER, IER, DER, SER from trainer output dict (e.g. val_metrics[0])."""
+    if not d or not isinstance(d, dict):
+        return {"CER": None, "IER": None, "DER": None, "SER": None}
+    return {
+        "CER": _metric_get(d, f"{prefix}/CER"),
+        "IER": _metric_get(d, f"{prefix}/IER"),
+        "DER": _metric_get(d, f"{prefix}/DER"),
+        "SER": _metric_get(d, f"{prefix}/SER"),
+    }
+
+
+def _print_aligned_cer_table(
+    train_bd: dict[str, float | None],
+    val_bd: dict[str, float | None],
+    test_bd: dict[str, float | None],
+) -> None:
+    """Single table: train / val / test aligned with best val epoch + best ckpt."""
+    rows = [
+        ("train", train_bd),
+        ("val", val_bd),
+        ("test", test_bd),
+    ]
+    print(
+        f"{'split':<6}  {'CER':>10}  {'IER':>10}  {'DER':>10}  {'SER':>10}",
+        flush=True,
+    )
+    print("  " + "-" * 52, flush=True)
+    for name, b in rows:
+        def f(x):
+            return f"{x:10.4f}" if x is not None else f"{'n/a':>10}"
+
+        print(
+            f"{name:<6}  {f(b.get('CER'))}  {f(b.get('IER'))}  {f(b.get('DER'))}  {f(b.get('SER'))}",
+            flush=True,
+        )
+
+
+def _print_breakdown_block(title: str, b: dict[str, float | None]) -> None:
+    cer, ier, der, ser = b.get("CER"), b.get("IER"), b.get("DER"), b.get("SER")
+    if all(x is None for x in (cer, ier, der, ser)):
+        print(f"  {title}: n/a", flush=True)
+        return
+    parts = []
+    if cer is not None:
+        parts.append(f"CER={cer:.6g}")
+    if ier is not None:
+        parts.append(f"IER={ier:.6g}")
+    if der is not None:
+        parts.append(f"DER={der:.6g}")
+    if ser is not None:
+        parts.append(f"SER={ser:.6g}")
+    print(f"  {title}: " + "  ".join(parts), flush=True)
+
+
 @hydra.main(version_base=None, config_path="../config", config_name="base")
 def main(config: DictConfig):
     log.info(f"\nConfig:\n{OmegaConf.to_yaml(config)}")
@@ -94,10 +214,20 @@ def main(config: DictConfig):
     # Instantiate callbacks
     callback_configs = config.get("callbacks", [])
     callbacks = [instantiate(cfg) for cfg in callback_configs]
+    callbacks.append(_EpochSummaryCallback())
+    callbacks.append(_ValEpochSummaryCallback())
+    best_train_cb = _BestValTrainSnapshotCallback()
+    callbacks.append(best_train_cb)
+
+    # Disable step-level progress bar; epoch summary printed by callback instead
+    trainer_kwargs = OmegaConf.to_container(config.trainer, resolve=True)  # type: ignore[arg-type]
+    if not isinstance(trainer_kwargs, dict):
+        trainer_kwargs = dict(config.trainer)
+    trainer_kwargs["enable_progress_bar"] = False
 
     # Initialize trainer
     trainer = pl.Trainer(
-        **config.trainer,
+        **trainer_kwargs,
         callbacks=callbacks,
     )
 
@@ -110,15 +240,16 @@ def main(config: DictConfig):
 
         # Train
         trainer.fit(module, datamodule, ckpt_path=resume_from_checkpoint)
+    else:
+        pass
 
-        # Load best checkpoint
+    if config.train:
+        # Load best checkpoint for val/test reporting
         try:
             torch.serialization.add_safe_globals([omegaconf.dictconfig.DictConfig, omegaconf.listconfig.ListConfig])
         except AttributeError:
             pass
-        module = module.load_from_checkpoint(
-            trainer.checkpoint_callback.best_model_path
-        )
+        module = module.load_from_checkpoint(trainer.checkpoint_callback.best_model_path)
 
     # Validate and test on the best checkpoint (if training), or on the
     # loaded `config.checkpoint` (otherwise)
@@ -131,6 +262,29 @@ def main(config: DictConfig):
         "best_checkpoint": trainer.checkpoint_callback.best_model_path,
     }
     pprint.pprint(results, sort_dicts=False)
+
+    # Final summary: CER + IER/DER/SER breakdown (same as CharacterErrorRates)
+    val_bd = _breakdown_from_metrics(
+        val_metrics[0] if val_metrics else None, "val"
+    )
+    test_bd = _breakdown_from_metrics(
+        test_metrics[0] if test_metrics else None, "test"
+    )
+    train_bd = best_train_cb.best_train_bd if config.train else {}
+    print("\n========== Character error breakdown (best ckpt; train is best-val-epoch train) ==========", flush=True)
+    if best_train_cb.best_epoch is not None:
+        print(f"  train = metrics logged during epoch {best_train_cb.best_epoch} when val/CER achieved its best", flush=True)
+    else:
+        print("  train = n/a (best-val-epoch snapshot not available)", flush=True)
+
+    if train_bd and val_bd.get("CER") is not None and test_bd.get("CER") is not None:
+        _print_aligned_cer_table(train_bd, val_bd, test_bd)
+    else:
+        if not train_bd:
+            print("  train: n/a", flush=True)
+        _print_breakdown_block("val", val_bd)
+        _print_breakdown_block("test", test_bd)
+    print("================================================================================\n", flush=True)
 
 
 if __name__ == "__main__":

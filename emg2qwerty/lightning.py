@@ -4,6 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
@@ -22,7 +23,6 @@ from emg2qwerty.charset import charset
 from emg2qwerty.data import LabelData, WindowedEMGDataset
 from emg2qwerty.metrics import CharacterErrorRates
 from emg2qwerty.modules import (
-    BiGRUEncoder,
     MultiBandRotationInvariantMLP,
     SpectrogramNorm,
     TDSConvEncoder,
@@ -100,6 +100,11 @@ class WindowedEMGDataModule(pl.LightningDataModule):
             ]
         )
 
+    def _persistent_workers(self) -> bool:
+        # On Windows, persistent_workers=True with num_workers>0 often breaks
+        # (spawn / HDF5). Disabling it allows multiple workers → higher GPU util.
+        return self.num_workers > 0 and sys.platform != "win32"
+
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
             self.train_dataset,
@@ -108,7 +113,8 @@ class WindowedEMGDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             collate_fn=WindowedEMGDataset.collate,
             pin_memory=True,
-            persistent_workers=(self.num_workers > 0),
+            persistent_workers=self._persistent_workers(),
+            prefetch_factor=(4 if self.num_workers > 0 else None),
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -119,7 +125,8 @@ class WindowedEMGDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             collate_fn=WindowedEMGDataset.collate,
             pin_memory=True,
-            persistent_workers=(self.num_workers > 0),
+            persistent_workers=self._persistent_workers(),
+            prefetch_factor=(4 if self.num_workers > 0 else None),
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -134,7 +141,8 @@ class WindowedEMGDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             collate_fn=WindowedEMGDataset.collate,
             pin_memory=True,
-            persistent_workers=(self.num_workers > 0),
+            persistent_workers=self._persistent_workers(),
+            prefetch_factor=(4 if self.num_workers > 0 else None),
         )
 
 
@@ -246,140 +254,42 @@ class TDSConvCTCModule(pl.LightningModule):
         self.log_dict(metrics.compute(), sync_dist=True)
         metrics.reset()
 
-    def training_step(self, *args, **kwargs) -> torch.Tensor:
-        return self._step("train", *args, **kwargs)
+    @torch.no_grad()
+    def eval_loader_character_error_rates(
+        self, dataloader: DataLoader
+    ) -> dict[str, float]:
+        """Run forward+decode on dataloader without backward; return CER/IER/DER/SER.
+        Uses same decode path as training_step for fair comparison with val/test on best ckpt.
+        """
+        cer_metric = CharacterErrorRates()
+        if torch.cuda.is_available() and next(self.parameters()).is_cuda:
+            cer_metric = cer_metric.to(self.device)
+        self.eval()
+        device = self.device
+        for batch in dataloader:
+            inputs = batch["inputs"].to(device)
+            targets = batch["targets"]
+            input_lengths = batch["input_lengths"]
+            target_lengths = batch["target_lengths"]
+            N = len(input_lengths)
 
-    def validation_step(self, *args, **kwargs) -> torch.Tensor:
-        return self._step("val", *args, **kwargs)
+            emissions = self.forward(inputs)
+            T_diff = inputs.shape[0] - emissions.shape[0]
+            emission_lengths = input_lengths.to(device) - T_diff
 
-    def test_step(self, *args, **kwargs) -> torch.Tensor:
-        return self._step("test", *args, **kwargs)
+            predictions = self.decoder.decode_batch(
+                emissions=emissions.detach().cpu().numpy(),
+                emission_lengths=emission_lengths.detach().cpu().numpy(),
+            )
+            targets_np = targets.detach().cpu().numpy()
+            target_lengths_np = target_lengths.detach().cpu().numpy()
+            for i in range(N):
+                target = LabelData.from_labels(
+                    targets_np[: target_lengths_np[i], i]
+                )
+                cer_metric.update(prediction=predictions[i], target=target)
 
-    def on_train_epoch_end(self) -> None:
-        self._epoch_end("train")
-
-    def on_validation_epoch_end(self) -> None:
-        self._epoch_end("val")
-
-    def on_test_epoch_end(self) -> None:
-        self._epoch_end("test")
-
-    def configure_optimizers(self) -> dict[str, Any]:
-        return utils.instantiate_optimizer_and_scheduler(
-            self.parameters(),
-            optimizer_config=self.hparams.optimizer,
-            lr_scheduler_config=self.hparams.lr_scheduler,
-        )
-
-
-class BiGRUCTCModule(pl.LightningModule):
-    NUM_BANDS: ClassVar[int] = 2
-    ELECTRODE_CHANNELS: ClassVar[int] = 16
-
-    def __init__(
-        self,
-        in_features: int,
-        mlp_features: Sequence[int],
-        hidden_size: int,
-        num_layers: int,
-        dropout: float,
-        bidirectional: bool,
-        optimizer: DictConfig,
-        lr_scheduler: DictConfig,
-        decoder: DictConfig,
-    ) -> None:
-        super().__init__()
-        self.save_hyperparameters()
-
-        num_features = self.NUM_BANDS * mlp_features[-1]
-        gru_output_dim = hidden_size * 2 if bidirectional else hidden_size
-
-        # Model
-        # inputs: (T, N, bands=2, electrode_channels=16, freq)
-        self.model = nn.Sequential(
-            # (T, N, bands=2, C=16, freq)
-            SpectrogramNorm(channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS),
-            # (T, N, bands=2, mlp_features[-1])
-            MultiBandRotationInvariantMLP(
-                in_features=in_features,
-                mlp_features=mlp_features,
-                num_bands=self.NUM_BANDS,
-            ),
-            # (T, N, num_features)
-            nn.Flatten(start_dim=2),
-            BiGRUEncoder(
-                input_size=num_features,
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                dropout=dropout,
-                bidirectional=bidirectional,
-            ),
-            # (T, N, num_classes)
-            nn.Linear(gru_output_dim, charset().num_classes),
-            nn.LogSoftmax(dim=-1),
-        )
-
-        # Criterion
-        self.ctc_loss = nn.CTCLoss(blank=charset().null_class)
-
-        # Decoder
-        self.decoder = instantiate(decoder)
-
-        # Metrics
-        metrics = MetricCollection([CharacterErrorRates()])
-        self.metrics = nn.ModuleDict(
-            {
-                f"{phase}_metrics": metrics.clone(prefix=f"{phase}/")
-                for phase in ["train", "val", "test"]
-            }
-        )
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        return self.model(inputs)
-
-    def _step(
-        self, phase: str, batch: dict[str, torch.Tensor], *args, **kwargs
-    ) -> torch.Tensor:
-        inputs = batch["inputs"]
-        targets = batch["targets"]
-        input_lengths = batch["input_lengths"]
-        target_lengths = batch["target_lengths"]
-        N = len(input_lengths)  # batch_size
-
-        emissions = self.forward(inputs)
-
-        # BiGRU doesn't shrink the temporal dimension like TDS conv does
-        emission_lengths = input_lengths
-
-        loss = self.ctc_loss(
-            log_probs=emissions,  # (T, N, num_classes)
-            targets=targets.transpose(0, 1),  # (T, N) -> (N, T)
-            input_lengths=emission_lengths,  # (N,)
-            target_lengths=target_lengths,  # (N,)
-        )
-
-        # Decode emissions
-        predictions = self.decoder.decode_batch(
-            emissions=emissions.detach().cpu().numpy(),
-            emission_lengths=emission_lengths.detach().cpu().numpy(),
-        )
-
-        # Update metrics
-        metrics = self.metrics[f"{phase}_metrics"]
-        targets = targets.detach().cpu().numpy()
-        target_lengths = target_lengths.detach().cpu().numpy()
-        for i in range(N):
-            # Unpad targets (T, N) for batch entry
-            target = LabelData.from_labels(targets[: target_lengths[i], i])
-            metrics.update(prediction=predictions[i], target=target)
-
-        self.log(f"{phase}/loss", loss, batch_size=N, sync_dist=True)
-        return loss
-
-    def _epoch_end(self, phase: str) -> None:
-        metrics = self.metrics[f"{phase}_metrics"]
-        self.log_dict(metrics.compute(), sync_dist=True)
-        metrics.reset()
+        return cer_metric.compute()
 
     def training_step(self, *args, **kwargs) -> torch.Tensor:
         return self._step("train", *args, **kwargs)

@@ -9,13 +9,6 @@ Run the launcher. It automatically enforces `num_workers > 0` for Windows and ha
 ```
 *Note: Make sure your data is in `../data/subject_89335547` (or pass `-DataDir <path>`).*
 
-### Train BiGRU Variant
-To train the new BiGRU-CTC model on the single-user split:
-```powershell
-python -m emg2qwerty.train user=single_user model=bigru_ctc trainer.accelerator=gpu trainer.devices=1 trainer.max_epochs=40
-```
-*(Or adapt the `run_train_windows.ps1` to accept a model argument if desired.)*
-
 ## 2. Freeze Run
 After training completes, "freeze" the logs and metadata into `results/`. This creates small, committable artifacts instead of huge checkpoints.
 ```powershell

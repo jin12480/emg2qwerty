@@ -1,0 +1,30 @@
+# Train without SpecAugment. This file is package transforms only (no @package _global_)
+# so Hydra keeps config.transforms.train / val / test at the right level.
+# Same pipeline as log_spectrogram train minus SpecAugment.
+#
+train:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]
+  - _target_: emg2qwerty.transforms.ForEach
+    transform:
+      _target_: emg2qwerty.transforms.RandomBandRotation
+      offsets: [-1, 0, 1]
+  - _target_: emg2qwerty.transforms.TemporalAlignmentJitter
+    max_offset: 120
+  - _target_: emg2qwerty.transforms.LogSpectrogram
+    n_fft: 64
+    hop_length: 16
+
+val:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]
+  - _target_: emg2qwerty.transforms.LogSpectrogram
+    n_fft: 64
+    hop_length: 16
+
+test:
+  - _target_: emg2qwerty.transforms.ToTensor
+    fields: [emg_left, emg_right]
+  - _target_: emg2qwerty.transforms.LogSpectrogram
+    n_fft: 64
+    hop_length: 16
