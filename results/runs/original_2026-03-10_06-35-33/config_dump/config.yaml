@@ -39,7 +39,7 @@ dataset:
   test:
   - user: 89335547
     session: 2021-06-02-1622682789-keystrokes-dca-study@1-0efbe614-9ae6-4131-9192-4398359b4f5f
-  root: C:/Users/15855/OneDrive/UCLA/course/247A/Project/emg2qwerty/data/subject_89335547
+  root: C:/Users/15855/OneDrive/UCLA/course/247A/Project/emg2qwerty/scripts/../data/subject_89335547
 to_tensor:
   _target_: emg2qwerty.transforms.ToTensor
   fields:
@@ -78,14 +78,16 @@ transforms:
   - ${logspec}
   test: ${transforms.val}
 module:
-  _target_: emg2qwerty.lightning.BiGRUCTCModule
+  _target_: emg2qwerty.lightning.TDSConvCTCModule
   in_features: 528
   mlp_features:
   - 384
-  hidden_size: 256
-  num_layers: 2
-  dropout: 0.1
-  bidirectional: true
+  block_channels:
+  - 24
+  - 24
+  - 24
+  - 24
+  kernel_width: 32
 datamodule:
   _target_: emg2qwerty.lightning.WindowedEMGDataModule
   window_length: 8000

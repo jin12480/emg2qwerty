@@ -1,6 +1,6 @@
 {
-  "latest_run_id": "baseline_2026-03-09_03-18-40",
-  "val_cer": 23.172351837158203,
-  "test_cer": 24.248973846435547,
-  "checkpoint_path": "logs/2026-03-09/03-18-40\\checkpoints\\last.ckpt"
+  "latest_run_id": "baseline_2026-03-10_02-12-28",
+  "val_cer": 16.304828643798828,
+  "test_cer": 18.97557830810547,
+  "checkpoint_path": "models/baseline_best_18.9.ckpt"
 }

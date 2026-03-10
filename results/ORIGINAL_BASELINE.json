@@ -1,0 +1,13 @@
+{
+  "run_id": "original_baseline",
+  "description": "Unmodified Calvin Pang repo config (single_user, tds_conv_ctc, 40 epochs)",
+  "val_cer": 23.0173,
+  "test_cer": 24.6596,
+  "val_ier": 7.19982,
+  "val_der": 1.77226,
+  "val_ser": 14.0452,
+  "test_ier": 6.50529,
+  "test_der": 1.92349,
+  "test_ser": 16.2308,
+  "checkpoint_path": "models/original_baseline.ckpt"
+}

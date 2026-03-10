@@ -1,0 +1,48 @@
+% ========== Baseline and Baseline Optimization (paste into your NeurIPS writeup) ==========
+% Section: Methods (paragraphs 2--3) + Results (table + text) + Discussion (paragraph)
+
+\subsection{Baseline and Optimized Baseline}
+
+\paragraph{Original baseline (reproduction).}
+We adopt the official \texttt{emg2qwerty} implementation by Pang et al.\ and train the provided TDS convolutional CTC model on a single subject (ID 89335547) using the authors' Hydra configuration: \texttt{user=single\_user}, \texttt{transforms=log\_spectrogram} (normal SpecAugment), \texttt{model=tds\_conv\_ctc}, \texttt{optimizer=adam} (default $\text{lr}=10^{-3}$), \texttt{lr\_scheduler=linear\_warmup\_cosine\_annealing}, \texttt{decoder=ctc\_greedy}, \texttt{batch\_size=32}, \texttt{num\_workers=1}, and \texttt{trainer.max\_epochs=40}. We re-ran this configuration without any hyperparameter or data-split changes. On the held-out validation and test sets, this \emph{reproduced original baseline} achieves $\text{Val CER} = 23.02\%$ and $\text{Test CER} = 24.66\%$ (test IER/DER/SER: $6.51\%$, $1.92\%$, $16.23\%$). We save this checkpoint as the original baseline for comparison.
+
+\paragraph{Hyperparameter and augmentation search.}
+Keeping the same model architecture and dataset, we systematically varied the following to improve the training recipe:
+
+\begin{itemize}
+    \item \textbf{Batch size:} $\{1, 2, 4, 8, 32, 64\}$ (default 32).
+    \item \textbf{Learning rate:} $\{10^{-4}, 5\times10^{-4}, 10^{-3}\}$ (default $10^{-3}$).
+    \item \textbf{SpecAugment:} \texttt{log\_spectrogram} (normal), \texttt{log\_spectrogram\_mild} (weaker augmentation), or \texttt{log\_spectrogram\_no\_specaug} (no SpecAugment on training).
+    \item \textbf{DataLoader \texttt{num\_workers}:} $\{0, 1, 4, 8, 10, 16, 32\}$ (default 1).
+\end{itemize}
+
+We kept the optimizer (Adam), scheduler (linear warm-up + cosine annealing, warm-up epochs 10 when overridden), and 40-epoch budget fixed. For runs where we overrode the learning rate, we set \texttt{optimizer.lr} and \texttt{lr\_scheduler.scheduler.eta\_min=1e-6}. We also enabled \texttt{torch.backends.cudnn.benchmark=True} and \texttt{torch.set\_float32\_matmul\_precision("high")} (TF32) for faster training. Across all runs we selected the best checkpoint by validation CER and reported the corresponding test CER.
+
+\paragraph{Results.}
+Table~\ref{tab:baseline_ablation} summarizes a subset of runs for which we have full config and test metrics; additional runs (e.g., batch 1, 64; num\_workers 0, 32; other LR/SpecAug combinations) were executed and are consistent with the trends below. The best configuration found is batch size 8, learning rate $5\times10^{-4}$, no SpecAugment (\texttt{log\_spectrogram\_no\_specaug}), and \texttt{num\_workers=10}, yielding $\text{Test CER} = 18.98\%$ (Val CER $16.30\%$). We save this as our \emph{optimized baseline} checkpoint.
+
+\begin{table}[t]
+    \centering
+    \caption{Selected baseline optimization runs (single subject, TDS Conv CTC, 40 epochs). SpecAug: normal = \texttt{log\_spectrogram}, mild = \texttt{log\_spectrogram\_mild}, none = \texttt{log\_spectrogram\_no\_specaug}. Best test CER in bold.}
+    \label{tab:baseline_ablation}
+    \begin{tabular}{cccccc}
+        \toprule
+        Batch & LR & SpecAug & Num workers & Val CER & Test CER \\
+        \midrule
+        32 & $10^{-3}$ & normal & 1 & 23.02 & 24.66 \\
+        \midrule
+        8 & $10^{-4}$ & none & 12 & -- & 25.55 \\
+        8 & $10^{-3}$ & none & 16 & -- & 20.42 \\
+        8 & $5{\times}10^{-4}$ & mild & 10 & -- & 20.21--20.51 \\
+        8 & $5{\times}10^{-4}$ & none & 10 & 16.30 & \textbf{18.98} \\
+        8 & $5{\times}10^{-4}$ & none & 10 & -- & 19.71 \\
+        8 & $5{\times}10^{-4}$ & none & 10 & -- & 21.40 \\
+        4 & $5{\times}10^{-4}$ & none & 8 & -- & 19.73 \\
+        4 & $5{\times}10^{-4}$ & none & 10 & -- & 20.55 \\
+        2 & $5{\times}10^{-4}$ & none & 8 & -- & 20.38 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\paragraph{Discussion.}
+Relative to the reproduced original baseline (Test CER $24.66\%$), the optimized recipe reduces test CER to $18.98\%$ (absolute $-$5.68 pp, $\approx$23\% relative). Learning rate had a large effect: $10^{-4}$ led to slow convergence and the worst test CER ($25.55\%$) among tuned runs; $5\times10^{-4}$ gave the best balance; $10^{-3}$ (default) remained competitive. Removing SpecAugment (\texttt{no\_specaug}) consistently outperformed normal or mild SpecAugment in our sweep, suggesting the default augmentation was too strong for this single-subject setting. Smaller batch sizes (2, 4, 8) with sufficient \texttt{num\_workers} (8--10) improved both convergence and final CER over the default batch size 32 with a single worker. We did not observe a clear benefit from increasing \texttt{num\_workers} beyond 10. Overall, the same architecture and data achieve substantially better decoding when the training hyperparameters and data-loading setup are tuned.

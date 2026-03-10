@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-03-10T07:05:32.788835",
+  "run_id": "original_2026-03-10_06-35-33",
+  "run_dir": "logs\\2026-03-10\\06-35-33",
+  "git_commit": "a03f8ee454ec084ab3dd9a49b422c698f5cbe94e",
+  "python_version": "3.13.5 | packaged by Anaconda, Inc. | (main, Jun 12 2025, 16:37:03) [MSC v.1929 64 bit (AMD64)]",
+  "data_dir": null,
+  "checkpoint_path": "logs\\2026-03-10\\06-35-33\\checkpoints\\last.ckpt",
+  "val_cer": null,
+  "test_cer": null,
+  "metrics_note": "Extracted from text logs. If null, either not evaluated or log parsing failed."
+}
